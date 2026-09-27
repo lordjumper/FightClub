@@ -111,39 +111,152 @@ local function confirm(question, onYes)
     StaticPopup_Show("GAMBLER_CONFIRM", question, nil, onYes)
 end
 
+local function makeWindow(name, title, portraitTexture)
+    for _, template in ipairs({ "PortraitFrameTemplate", "BasicFrameTemplateWithInset" }) do
+        local ok, window = pcall(CreateFrame, "Frame", name, UIParent, template)
+        if ok and window and type(window.CloseButton) == "table" then
+            if window.SetTitle then
+                window:SetTitle(title)
+            elseif type(window.TitleText) == "table" then
+                window.TitleText:SetText(title)
+            end
+
+            -- The portrait texture's name differs between client versions: use whichever exists
+            local container = window.PortraitContainer
+            local portrait
+            for _, candidate in ipairs({
+                { window.portrait }, { window.Portrait }, { type(container) == "table" and container.portrait or nil },
+            }) do
+                if type(candidate[1]) == "table" then
+                    portrait = candidate[1]
+                    break
+                end
+            end
+            if portrait then
+                portrait:SetTexture(portraitTexture)
+                portrait:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+                if portrait.SetMask then
+                    pcall(portrait.SetMask, portrait, "Interface\\CharacterFrame\\TempPortraitAlphaMask")
+                end
+                return window, true
+            end
+            return window, false
+        end
+        if ok and window then window:Hide() end
+    end
+
+    -- Old clients: the dialog box with its own title and close button
+    local window = CreateFrame("Frame", name, UIParent, BACKDROP_TEMPLATE)
+    window:SetBackdrop(DIALOG_BACKDROP)
+    makeText(window, "GameFontNormal", "TOP", 0, -16):SetText(title)
+    CreateFrame("Button", nil, window, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -6, -6)
+    return window, false
+end
+
+-- The dark, bordered box the bank puts its slots in
+local function makeInset(parent)
+    local ok, box = pcall(CreateFrame, "Frame", nil, parent, "InsetFrameTemplate")
+    if ok and box then return box end
+
+    box = CreateFrame("Frame", nil, parent, BACKDROP_TEMPLATE)
+    box:SetBackdrop(TOOLTIP_BACKDROP)
+    box:SetBackdropColor(0, 0, 0, 0.7)
+    box:SetBackdropBorderColor(0.6, 0.6, 0.6)
+    return box
+end
+
+local function makeDraggable(window, name)
+    window:SetFrameStrata("DIALOG")
+    window:SetMovable(true)
+    window:EnableMouse(true)
+    window:SetClampedToScreen(true)
+    window:RegisterForDrag("LeftButton")
+    window:SetScript("OnDragStart", window.StartMoving)
+    window:SetScript("OnDragStop", window.StopMovingOrSizing)
+    window:Hide()
+    tinsert(UISpecialFrames, name) -- lets Escape close it
+end
+
+-- Fills a texture with a flat colour (older clients call it SetTexture)
+local function paint(texture, r, g, b, a)
+    if texture.SetColorTexture then
+        texture:SetColorTexture(r, g, b, a)
+    else
+        texture:SetTexture(r, g, b, a)
+    end
+end
+
+-- Small gold heading, like the labels in the game's own windows
+local function makeLabel(parent, text)
+    local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetText(text)
+    return label
+end
+
+-- A thin coloured edge around a frame, hidden until needed
+local function makeEdge(parent, r, g, b)
+    local edge = {}
+    local sides = {
+        { "TOPLEFT", "TOPRIGHT", nil, 2 }, { "BOTTOMLEFT", "BOTTOMRIGHT", nil, 2 },
+        { "TOPLEFT", "BOTTOMLEFT", 2, nil }, { "TOPRIGHT", "BOTTOMRIGHT", 2, nil },
+    }
+    for _, side in ipairs(sides) do
+        local line = parent:CreateTexture(nil, "OVERLAY")
+        line:SetPoint(side[1])
+        line:SetPoint(side[2])
+        if side[3] then line:SetWidth(side[3]) end
+        if side[4] then line:SetHeight(side[4]) end
+        paint(line, r, g, b, 0.9)
+        line:Hide()
+        table.insert(edge, line)
+    end
+    return edge
+end
+
+local function showEdge(edge, shown)
+    for _, line in ipairs(edge) do setShown(line, shown) end
+end
+
 -- Main window
 
-local frame = CreateFrame("Frame", "GamblerFrame", UIParent, BACKDROP_TEMPLATE)
-frame:SetSize(392, 490)
+local frame, hasPortrait = makeWindow("GamblerFrame", "Olympus Fight Club", "Interface\\Icons\\INV_Misc_Coin_02")
+frame:SetSize(392, 500)
 frame:SetPoint("CENTER")
-frame:SetFrameStrata("DIALOG")
-frame:SetBackdrop(DIALOG_BACKDROP)
-frame:SetMovable(true)
-frame:EnableMouse(true)
-frame:SetClampedToScreen(true)
-frame:RegisterForDrag("LeftButton")
-frame:SetScript("OnDragStart", frame.StartMoving)
-frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
-frame:Hide()
-tinsert(UISpecialFrames, "GamblerFrame") -- lets Escape close it
+makeDraggable(frame, "GamblerFrame")
 
-local header = frame:CreateTexture(nil, "ARTWORK")
-header:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
-header:SetSize(300, 64)
-header:SetPoint("TOP", 0, 12)
+-- Status lines sit beside the portrait, like the bank's header
+local headerX = hasPortrait and 64 or 18
+local statusText = makeText(frame, "GameFontHighlight", "TOPLEFT", headerX, -32)
+statusText:SetJustifyH("LEFT")
+local bookieText = makeText(frame, "GameFontDisableSmall", "TOPLEFT", headerX, -50)
+bookieText:SetJustifyH("LEFT")
 
-local title = makeText(frame, "GameFontNormal", "TOP", 0, -2)
-title:SetText("Olympus Fight Club")
+-- A thin gold bar under the header that runs down with the betting timer
+local timerBar = CreateFrame("StatusBar", nil, frame)
+timerBar:SetPoint("TOPLEFT", 16, -64)
+timerBar:SetPoint("TOPRIGHT", -16, -64)
+timerBar:SetHeight(4)
+timerBar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+timerBar:SetStatusBarColor(1, 0.82, 0)
+timerBar:SetMinMaxValues(0, 1)
+local timerBack = timerBar:CreateTexture(nil, "BACKGROUND")
+timerBack:SetAllPoints()
+paint(timerBack, 0, 0, 0, 0.5)
+timerBar:Hide()
+local timerTotals = {} -- fight id -> longest time left we saw, so the bar starts full
 
-CreateFrame("Button", nil, frame, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -6, -6)
-
-local statusText = makeText(frame, "GameFontHighlight", "TOP", 0, -30)
-local bookieText = makeText(frame, "GameFontDisableSmall", "TOP", 0, -46)
+-- Status colours: green while betting is open, gold for the fight and its result
+local STATUS_COLOR = {
+    open = { 0.35, 1, 0.35 },
+    closed = { 1, 0.82, 0 },
+    won = { 1, 0.82, 0 },
+    cancelled = { 1, 0.5, 0.25 },
+}
 
 local function makePanel()
     local panel = CreateFrame("Frame", nil, frame)
-    panel:SetPoint("TOPLEFT", 16, -66)
-    panel:SetPoint("TOPRIGHT", -16, -66)
+    panel:SetPoint("TOPLEFT", 16, -72)
+    panel:SetPoint("TOPRIGHT", -16, -72)
     panel:SetHeight(270)
     return panel
 end
@@ -153,13 +266,12 @@ local bookPanel = makePanel()
 
 -- Activity feed
 
-local feedBox = CreateFrame("Frame", nil, frame, BACKDROP_TEMPLATE)
-feedBox:SetPoint("BOTTOMLEFT", 14, 14)
-feedBox:SetPoint("BOTTOMRIGHT", -14, 14)
-feedBox:SetHeight(120)
-feedBox:SetBackdrop(TOOLTIP_BACKDROP)
-feedBox:SetBackdropColor(0, 0, 0, 0.7)
-feedBox:SetBackdropBorderColor(0.6, 0.6, 0.6)
+local feedBox = makeInset(frame)
+feedBox:SetPoint("BOTTOMLEFT", 12, 12)
+feedBox:SetPoint("BOTTOMRIGHT", -12, 12)
+feedBox:SetHeight(122)
+
+makeLabel(frame, "Activity"):SetPoint("BOTTOMLEFT", feedBox, "TOPLEFT", 4, 3)
 
 local feed = CreateFrame("ScrollingMessageFrame", nil, feedBox)
 feed:SetPoint("TOPLEFT", 8, -8)
@@ -251,12 +363,19 @@ local amountInput -- bet / deposit amount, created below
 local function makeCard(side, anchor)
     local r, g, b = unpack(SIDE_COLOR[side])
 
-    local card = CreateFrame("Frame", nil, betPanel, BACKDROP_TEMPLATE)
+    local card = makeInset(betPanel)
     card:SetSize(150, 126)
     card:SetPoint(anchor, 0, 0)
-    card:SetBackdrop(TOOLTIP_BACKDROP)
-    card:SetBackdropColor(r * 0.3, g * 0.3, b * 0.3, 0.9)
-    card:SetBackdropBorderColor(r, g, b)
+
+    -- A soft red or blue band behind the name, so each side reads at a glance
+    local band = card:CreateTexture(nil, "BORDER")
+    band:SetPoint("TOPLEFT", 3, -3)
+    band:SetPoint("TOPRIGHT", -3, -3)
+    band:SetHeight(32)
+    paint(band, r, g, b, 0.22)
+
+    -- Gold edge around the fighter you've bet on
+    card.pickEdge = makeEdge(card, 1, 0.82, 0)
 
     card.name = makeText(card, "GameFontNormalLarge", "TOP", 0, -12)
     card.name:SetTextColor(r, g, b)
@@ -341,18 +460,23 @@ table.insert(quickButtons, makeButton(betPanel, "Clear", 48, 0, -162, function()
     MoneyInputFrame_SetCopper(amountInput, 0)
 end))
 
--- Your bet and balance
-local yourBetText = makeText(betPanel, "GameFontHighlight", "TOPLEFT", 2, -192)
-local balanceText = makeText(betPanel, "GameFontHighlight", "TOPLEFT", 2, -210)
+-- Your bet and balance, in a dark box like the bank's money area
+local accountBox = makeInset(betPanel)
+accountBox:SetPoint("TOPLEFT", 0, -186)
+accountBox:SetPoint("TOPRIGHT", 0, -186)
+accountBox:SetHeight(42)
 
-local cashOutButton = makeButton(betPanel, "Cash Out", 328, 0, -230, function()
+local yourBetText = makeText(accountBox, "GameFontHighlight", "TOPLEFT", 8, -7)
+local balanceText = makeText(accountBox, "GameFontHighlight", "TOPLEFT", 8, -23)
+
+local cashOutButton = makeButton(betPanel, "Cash Out", 328, 0, -234, function()
     local balance = bettor.account.balance
     confirm(("Cash out your %s? Trade the bookie to get it now, or they'll mail it to you."):format(money(balance)), bettor.cashOut)
 end)
-cashOutButton:SetPoint("TOPRIGHT", 0, -230) -- stretches across the panel
+cashOutButton:SetPoint("TOPRIGHT", 0, -234) -- stretches across the panel
 
-local hintText = makeText(betPanel, "GameFontDisableSmall", "TOPLEFT", 2, -258)
-hintText:SetPoint("TOPRIGHT", 0, -258)
+local hintText = makeText(betPanel, "GameFontDisableSmall", "TOPLEFT", 2, -262)
+hintText:SetPoint("TOPRIGHT", 0, -262)
 hintText:SetJustifyH("LEFT")
 
 local function redrawCard(side, card, f, canBet, extra)
@@ -366,11 +490,20 @@ local function redrawCard(side, card, f, canBet, extra)
     setClassIcon(card.classIcon, look and look.class)
     setRaceIcon(card.raceIcon, look)
 
-    card.odds:SetText(odds and ("%.2fx"):format(odds) or "--")
+    -- After the fight the odds line shows the result instead
+    if f and f.status == "won" then
+        local won = f.winner == side
+        card.odds:SetText(won and "Winner" or "Defeated")
+        card.odds:SetTextColor(won and 1 or 0.5, won and 0.82 or 0.5, won and 0 or 0.5)
+    else
+        card.odds:SetText(odds and ("%.2fx"):format(odds) or "--")
+        card.odds:SetTextColor(1, 1, 1)
+    end
     card.pool:SetText(("%s from %d bet%s"):format(money(pool), count, count == 1 and "" or "s"))
     card.payout:SetText(canBet and extra > 0 and ("%s would pay %s"):format(money(extra), money(bettor.previewPayout(side, extra))) or "")
 
     local mySide = bettor.myBet()
+    showEdge(card.pickEdge, f ~= nil and mySide == side)
     card.button:SetText(mySide == side and "Add to Bet" or "Bet on " .. name)
     setEnabled(card.button, canBet and (not mySide or mySide == side))
 end
@@ -398,7 +531,14 @@ local function redrawBetPanel()
 
     local account = bettor.account
     local cashOut = account.cashOut > 0 and ("  |cff999999(%s cash-out waiting)|r"):format(money(account.cashOut)) or ""
-    balanceText:SetText(("Balance: |cffffd100%s|r%s"):format(money(account.balance), cashOut))
+
+    -- While the bet is still in play: what they'd have to cash out if their fighter wins
+    local ifWin = ""
+    if mySide and (f.status == "open" or f.status == "closed") then
+        local total = account.balance + bettor.previewPayout(mySide, 0)
+        ifWin = ("   |cff999999-|r   If %s wins: |cff55ff55%s|r to cash out"):format(f[mySide], money(total))
+    end
+    balanceText:SetText(("Balance: |cffffd100%s|r%s%s"):format(money(account.balance), ifWin, cashOut))
 
     local canDeal = live and not bettor.isBookie()
     setEnabled(cashOutButton, canDeal and account.balance > 0)
@@ -498,10 +638,16 @@ addNumberSetting("window", "Timer", -130)
 
 bookPanel:SetScript("OnShow", function() refreshSettings() end)
 
-local infoText = makeText(bookPanel, "GameFontHighlightSmall", "TOPLEFT", 2, -160)
-infoText:SetPoint("TOPRIGHT", 0, -160)
+-- The book's numbers, in a dark box
+local infoBox = makeInset(bookPanel)
+infoBox:SetPoint("TOPLEFT", 0, -154)
+infoBox:SetPoint("TOPRIGHT", 0, -154)
+infoBox:SetHeight(86)
+
+local infoText = makeText(infoBox, "GameFontHighlightSmall", "TOPLEFT", 8, -7)
+infoText:SetPoint("TOPRIGHT", -8, -7)
 infoText:SetJustifyH("LEFT")
-infoText:SetSpacing(3)
+infoText:SetSpacing(2)
 
 local modeButton = makeHalfButton(bookPanel, "Start Booking", 1, -246, function() bookie.toggleMode() end)
 local cashOutsButton = makeHalfButton(bookPanel, "Cash-outs", 2, -246, function() ui.toggleCashOuts() end)
@@ -606,9 +752,9 @@ local function layout()
     local width = math.max(MIN_PANEL,
         (card + CARD_PADDING) * 2 + CARD_GAP,
         half * 2 + 8,
-        textWidth(GameFontHighlight, statusText:GetText()),
-        textWidth(GameFontHighlight, yourBetText:GetText()),
-        textWidth(GameFontHighlight, balanceText:GetText()))
+        textWidth(GameFontHighlight, statusText:GetText()) + headerX, -- it sits beside the portrait
+        textWidth(GameFontHighlight, yourBetText:GetText()) + 16, -- padding inside the account box
+        textWidth(GameFontHighlight, balanceText:GetText()) + 16)
     width = math.min(math.ceil(width), MAX_PANEL)
 
     local cardWidth = (width - CARD_GAP) / 2
@@ -649,6 +795,21 @@ local function redraw()
     end
 
     statusText:SetText(bettor.statusText())
+
+    -- Colour the status by where the fight is, and run the countdown bar while betting is open
+    local f = bettor.hasBookie() and bettor.fight or nil
+    local color = f and STATUS_COLOR[f.status] or (f and { 1, 1, 1 } or { 0.6, 0.6, 0.6 })
+    statusText:SetTextColor(unpack(color))
+
+    if f and f.status == "open" and f.closesAt then
+        local left = math.max(0, f.closesAt - GetTime())
+        timerTotals[f.id] = math.max(timerTotals[f.id] or 0, left)
+        timerBar:SetValue(timerTotals[f.id] > 0 and left / timerTotals[f.id] or 0)
+        timerBar:Show()
+    else
+        timerBar:Hide()
+    end
+
     if bettor.isBookie() then
         bookieText:SetText("You're running the book")
     elseif bettor.hasBookie() then
@@ -691,41 +852,50 @@ end
 
 local CASH_ROWS = 10 -- rows per page
 
-local cashFrame = CreateFrame("Frame", "GamblerCashOutFrame", UIParent, BACKDROP_TEMPLATE)
-cashFrame:SetSize(300, 380)
+local cashFrame, cashHasPortrait = makeWindow("GamblerCashOutFrame", "Cash-outs", "Interface\\Icons\\INV_Letter_15")
+cashFrame:SetSize(300, 400)
 cashFrame:SetPoint("CENTER", 360, 0)
-cashFrame:SetFrameStrata("DIALOG")
-cashFrame:SetBackdrop(DIALOG_BACKDROP)
-cashFrame:SetMovable(true)
-cashFrame:EnableMouse(true)
-cashFrame:SetClampedToScreen(true)
-cashFrame:RegisterForDrag("LeftButton")
-cashFrame:SetScript("OnDragStart", cashFrame.StartMoving)
-cashFrame:SetScript("OnDragStop", cashFrame.StopMovingOrSizing)
-cashFrame:Hide()
-tinsert(UISpecialFrames, "GamblerCashOutFrame")
+makeDraggable(cashFrame, "GamblerCashOutFrame")
 
-local cashHeader = cashFrame:CreateTexture(nil, "ARTWORK")
-cashHeader:SetTexture("Interface\\DialogFrame\\UI-DialogBox-Header")
-cashHeader:SetSize(240, 64)
-cashHeader:SetPoint("TOP", 0, 12)
-makeText(cashFrame, "GameFontNormal", "TOP", 0, -2):SetText("Cash-outs")
+local cashHeaderX = cashHasPortrait and 64 or 18
+local cashSummary = makeText(cashFrame, "GameFontHighlight", "TOPLEFT", cashHeaderX, -34)
+cashSummary:SetJustifyH("LEFT")
 
-CreateFrame("Button", nil, cashFrame, "UIPanelCloseButton"):SetPoint("TOPRIGHT", -6, -6)
-
-local cashSummary = makeText(cashFrame, "GameFontHighlight", "TOP", 0, -30)
-
-local cashStatus = makeText(cashFrame, "GameFontNormalSmall", "TOPLEFT", 18, -50)
-cashStatus:SetPoint("TOPRIGHT", -18, -50)
+local cashStatus = makeText(cashFrame, "GameFontNormalSmall", "TOPLEFT", 18, -64)
+cashStatus:SetPoint("TOPRIGHT", -18, -64)
 cashStatus:SetHeight(28)
 cashStatus:SetJustifyV("TOP")
 
+-- The list sits in a dark box, like the bank's slots
+local cashListBox = makeInset(cashFrame)
+cashListBox:SetPoint("TOPLEFT", 10, -94)
+cashListBox:SetPoint("BOTTOMRIGHT", -10, 40)
+
 local cashRows = {}
+-- Column headings, like the bank and auction house lists
+local playerHeading = makeLabel(cashFrame, "Player")
+playerHeading:SetPoint("TOPLEFT", 20, -100)
+local amountHeading = makeLabel(cashFrame, "Amount")
+
 for i = 1, CASH_ROWS do
     local row = CreateFrame("Frame", nil, cashFrame)
     row:SetHeight(22)
-    row:SetPoint("TOPLEFT", 16, -84 - (i - 1) * 24)
-    row:SetPoint("TOPRIGHT", -16, -84 - (i - 1) * 24)
+    row:SetPoint("TOPLEFT", 16, -118 - (i - 1) * 24)
+    row:SetPoint("TOPRIGHT", -16, -118 - (i - 1) * 24)
+
+    -- Every other row is faintly striped, and the row under the mouse lights up
+    if i % 2 == 0 then
+        local stripe = row:CreateTexture(nil, "BACKGROUND")
+        stripe:SetAllPoints()
+        paint(stripe, 1, 1, 1, 0.04)
+    end
+    local hover = row:CreateTexture(nil, "BACKGROUND")
+    hover:SetAllPoints()
+    paint(hover, 1, 0.82, 0, 0.1)
+    hover:Hide()
+    row:EnableMouse(true)
+    row:SetScript("OnEnter", function() hover:Show() end)
+    row:SetScript("OnLeave", function() hover:Hide() end)
 
     row.name = makeText(row, "GameFontHighlight", "LEFT", 4, 0)
     row.name:SetWidth(120)
@@ -744,11 +914,13 @@ for i = 1, CASH_ROWS do
 end
 
 local cashPage = 1
-local cashPageText = makeText(cashFrame, "GameFontHighlightSmall", "BOTTOM", 0, 24)
-local prevPage = makeButton(cashFrame, "<", 30, 20, -340, function() cashPage = cashPage - 1 end)
-local nextPage = makeButton(cashFrame, ">", 30, 250, -340, function() cashPage = cashPage + 1 end)
+local cashPageText = makeText(cashFrame, "GameFontHighlightSmall", "BOTTOM", 0, 18)
+local prevPage = makeButton(cashFrame, "<", 30, 0, 0, function() cashPage = cashPage - 1 end)
+prevPage:ClearAllPoints()
+prevPage:SetPoint("BOTTOMLEFT", 14, 12)
+local nextPage = makeButton(cashFrame, ">", 30, 0, 0, function() cashPage = cashPage + 1 end)
 nextPage:ClearAllPoints()
-nextPage:SetPoint("TOPRIGHT", -20, -340)
+nextPage:SetPoint("BOTTOMRIGHT", -14, 12)
 
 -- Grows the window to fit the longest name and amount on the page
 local function layoutCashOuts()
@@ -765,10 +937,12 @@ local function layoutCashOuts()
         row.amount:ClearAllPoints()
         row.amount:SetPoint("LEFT", nameWidth + 16, 0)
     end
+    amountHeading:ClearAllPoints()
+    amountHeading:SetPoint("TOPLEFT", 16 + nameWidth + 16, -100) -- over the amount column
 
     local width = math.max(300,
         32 + nameWidth + 16 + amountWidth + 12 + 70,
-        textWidth(GameFontHighlight, cashSummary:GetText()) + 40)
+        textWidth(GameFontHighlight, cashSummary:GetText()) + cashHeaderX + 30)
     cashFrame:SetWidth(math.min(math.ceil(width), 600))
 end
 
