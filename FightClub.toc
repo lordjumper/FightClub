@@ -1,0 +1,17 @@
+## Interface: 16001
+## Title: Olympus Fight Club
+## Notes: Fight club betting for the Olympus guild
+## Author: Olympus
+## Version: 1.0
+## SavedVariables: GamblerDB
+
+Config.lua
+Util.lua
+Comms.lua
+Guild.lua
+Mail.lua
+Bookie.lua
+Bettor.lua
+UI.lua
+Minimap.lua
+Core.lua
