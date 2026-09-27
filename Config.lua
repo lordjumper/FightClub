@@ -21,6 +21,7 @@ ns.config = {
     heartbeat = 10,         -- re-send fight state at least this often
     bookieTimeout = 30,     -- seconds of silence before the bookie counts as gone
     requestCooldown = 0.5,  -- min seconds between requests per player
+    maxQueue = 5000,        -- flood limit for one-off messages; player balance updates are never limited
 
     tickInterval = 0.5, -- seconds between the addon's regular checks (timer, guild checks, mail)
     postage = 30,       -- copper per mail, so cash-outs must be bigger than this

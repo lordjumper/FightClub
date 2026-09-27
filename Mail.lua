@@ -10,7 +10,19 @@ local NO_GOLD_WAIT = 3 -- seconds after "mail sent" to see our gold drop before 
 
 local mailboxOpen = false
 local sending         -- the cash-out being mailed: { item, copper, moneyBefore, filled, answeredAt }
+local lastSent        -- the last mail sent: { to, copper }, read as the bookie clicks Send
 local lastMessage = "" -- latest note for the Cash-outs window
+
+-- Notes who each mail goes to and how much gold is on it, so a cash-out is only crossed off
+-- when a mail really went to that player (the Olympus addon checks mail the same way)
+if hooksecurefunc then
+    hooksecurefunc("SendMail", function(recipient)
+        lastSent = {
+            to = util.normalName(recipient),
+            copper = GetSendMailMoney and tonumber(GetSendMailMoney()) or 0,
+        }
+    end)
+end
 
 function mail.isOpen()
     return mailboxOpen
@@ -117,6 +129,7 @@ function mail.startCashOut(item)
     end
 
     sending = { item = item, copper = item.amount, moneyBefore = GetMoney() }
+    lastSent = nil
     sending.filled = fillSendTab(item.name, item.amount, item.subject)
 
     if sending.filled then
@@ -126,22 +139,37 @@ function mail.startCashOut(item)
     end
 end
 
--- Runs twice a second: a cash-out counts once our gold drops by its amount
+-- Runs twice a second. A mail counts when the game says it went out, it went to that player,
+-- and the gold on it actually left our bags. Whatever it carried comes off their cash-out,
+-- so a partial payment leaves the rest waiting.
 function mail.step()
-    if not sending then return end
+    if not sending or not sending.answeredAt then return end
 
-    local item = sending.item
-    if GetMoney() <= sending.moneyBefore - sending.copper then
-        item.amount = item.amount - sending.copper
+    local item, sent = sending.item, lastSent
+    local toThem = sent ~= nil and sent.to ~= nil and sent.to:lower() == item.name:lower()
+    local attached = sent and sent.copper or 0
+    local goldLeft = attached > 0 and GetMoney() <= sending.moneyBefore - attached
+
+    if toThem and goldLeft then
+        local paid = math.min(attached, item.amount)
+        item.amount = item.amount - paid
         if item.amount <= 0 then
             removeFrom(ns.db.outbox, item)
+            say("Mailed %s to %s. Paid in full.", money(paid), item.name)
+        else
+            say("Mailed %s to %s. %s is still owed.", money(paid), item.name, money(item.amount))
         end
-        say("Mailed %s to %s.", money(sending.copper), item.name)
-        log("Mailed %s to %s.", money(sending.copper), item.name)
+        if attached > paid then
+            say("Mailed %s to %s, %s more than they were owed.", money(attached), item.name, money(attached - paid))
+        end
+        log("Mailed %s to %s.", money(paid), item.name)
         sending = nil
         ns.bookie.cashOutPaid(item.name)
-    elseif sending.answeredAt and GetTime() - sending.answeredAt > NO_GOLD_WAIT then
-        say("That mail to %s went out without the right gold. It's still waiting.", item.name)
+    elseif not toThem then
+        say("That mail went to %s, not %s. Their cash-out is still waiting.", sent and sent.to or "someone else", item.name)
+        sending = nil
+    elseif GetTime() - sending.answeredAt > NO_GOLD_WAIT then
+        say("That mail to %s went out without any gold. Their cash-out is still waiting.", item.name)
         sending = nil
     end
 end

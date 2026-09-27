@@ -60,6 +60,12 @@ function comms.send(channel, target, message, key, urgent)
     local existing = key and queuedByKey[key]
     if existing and (existing.urgent or not urgent) then return end
 
+    -- Safety net against floods. Per-player messages (with a key) are never dropped: each player
+    -- only ever has one waiting, so balances and cash-outs always reach everyone.
+    if not key and channel ~= "BROADCAST" and comms.backlog() >= cfg.maxQueue then
+        return util.debug("Message queue full, dropped a message to \"%s\"", tostring(target))
+    end
+
     local entry = { channel = channel, target = target, message = message, key = key, urgent = urgent }
     if key then
         queuedByKey[key] = entry -- an older copy gets skipped
