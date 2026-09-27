@@ -4,6 +4,6 @@
 
 I am not responsible for any losses or issues that occur when using this addon.
 There is a sense of trust with the bookies that must be met on both parties ends.
-Play responsibly and honsetly. Bookies pay out properly, keep track of the numbers.
+Play responsibly and honestly. Bookies pay out properly, keep track of the numbers.
 
 Have Fun.
